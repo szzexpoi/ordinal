@@ -239,12 +239,15 @@ class OrdinalNet_att(nn.Module):
 		self.encoder = nn.Sequential(
 				nn.Conv2d(3, 16, kernel_size=3, padding=1, bias=True),
 				nn.ReLU(),
+				# nn.BatchNorm2d(16),
 				nn.MaxPool2d(kernel_size=2, stride=2),
 				nn.Conv2d(16, 32, kernel_size=3, padding=1, bias=True),
 				nn.ReLU(),
+				# nn.BatchNorm2d(32),
 				nn.MaxPool2d(kernel_size=2, stride=2),
 				nn.Conv2d(32, 48, kernel_size=3, padding=1, bias=True),
 				nn.ReLU(),
+				# nn.BatchNorm2d(48),
 			)
 
 		# learn independent decoders for the two patches and adaptive context
@@ -284,7 +287,9 @@ class OrdinalNet_att(nn.Module):
 
 		# use the two gaussian masks to locate features at the proximity of points
 		P1_feat = (v_feat*M1).sum([2, 3])
+		P1_feat = torch.relu(self.P1_decoder(P1_feat))
 		P2_feat = (v_feat*M2).sum([2, 3])
+		P2_feat = torch.relu(self.P1_decoder(P2_feat))
 
 		# extract contextual information with a single attention map
 		att_map = self.context_att(v_feat)
