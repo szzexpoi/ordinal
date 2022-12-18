@@ -147,6 +147,11 @@ class LSP_generator(data.Dataset):
 						img_name)).convert('RGB')
 		img = transforms.ToTensor()(img)
 
+		# supply model with additional information about relative positions
+		delta_y = self.points[index][0] - self.points[index][2]
+		delta_x = self.points[index][1] - self.points[index][3]
+		relative_pos = torch.FloatTensor([delta_y, delta_x])
+
 		# cropping the patches around the two points
 		patch_1, patch_2 = self.crop_patch(img, self.points[index])
 
@@ -159,9 +164,10 @@ class LSP_generator(data.Dataset):
 		patch_1 = self.normalizer(patch_1)
 		patch_2 = self.normalizer(patch_2)
 		mask_1 = self.mask_rescaler(mask_1)
-		mask_1 /= mask_1.sum() # previously max
+		mask_1 /= mask_1.max() # previously max
 		mask_2 = self.mask_rescaler(mask_2)
-		mask_2 /= mask_2.sum() # previously max
+		mask_2 /= mask_2.max() # previously max
+
 
 		if not self.use_softmax:
 			# get binary label
@@ -170,7 +176,7 @@ class LSP_generator(data.Dataset):
 			label = torch.zeros(2)
 			label[int(self.label[index])] = 1
 
-		return img, patch_1, patch_2, mask_1, mask_2, label
+		return img, patch_1, patch_2, mask_1, mask_2, relative_pos, label
 
 
 	def __len__(self, ):

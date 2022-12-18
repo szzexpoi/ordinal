@@ -237,15 +237,15 @@ class OrdinalNet_att(nn.Module):
 
 		# user a global encoder to extract features from the whole image
 		self.encoder = nn.Sequential(
-				nn.Conv2d(3, 16, kernel_size=3, padding=1, bias=True),
+				nn.Conv2d(3, 16, kernel_size=5, padding=2, bias=True), # originally kernel=3, filter 16
 				nn.ReLU(),
 				# nn.BatchNorm2d(16),
 				nn.MaxPool2d(kernel_size=2, stride=2),
-				nn.Conv2d(16, 32, kernel_size=3, padding=1, bias=True),
+				nn.Conv2d(16, 32, kernel_size=5, padding=2, bias=True), # originally kernel=3, filter 32
 				nn.ReLU(),
 				# nn.BatchNorm2d(32),
 				nn.MaxPool2d(kernel_size=2, stride=2),
-				nn.Conv2d(32, 48, kernel_size=3, padding=1, bias=True),
+				nn.Conv2d(32, 48, kernel_size=3, padding=1, bias=True), # originally kernel=3, filter 48
 				nn.ReLU(),
 				# nn.BatchNorm2d(48),
 			)
@@ -259,14 +259,17 @@ class OrdinalNet_att(nn.Module):
 						padding=1, bias=True)
 		self.context_decoder = nn.Linear(48, 32)
 
+		# add an layer to encode relative position between points
+		self.pos_encoder = nn.Linear(2, 28)
+
 		# classification layer
 		self.dp = nn.Dropout(0.2)
 		if not self.use_softmax:
-			self.cls_layer = nn.Linear(128, 1)
+			self.cls_layer = nn.Linear(156, 1)
 		else:
-			self.cls_layer = nn.Linear(128, 2)
+			self.cls_layer = nn.Linear(156, 2)
 
-	def forward(self, Bbox, M1, M2):
+	def forward(self, Bbox, M1, M2, pos):
 		""" Inference process for predicting the ordinal relationship
 		between two points.
 
@@ -275,6 +278,7 @@ class OrdinalNet_att(nn.Module):
 				with size (batch, 3, 32, 32)
 			M1: Gaussian masks for the first points, size (batch, 1, 32, 32)
 			M1: Gaussian masks for the second points, size (batch, 1, 32, 32)
+			pos: Relative positive between the two points, size (batch, 2)
 
 		Return:
 			pred: Predicted ordinal relationships between the selected 
@@ -297,10 +301,79 @@ class OrdinalNet_att(nn.Module):
 		att_map = F.softmax(att_map.view(batch, h*w), dim=-1)
 		att_map = att_map.view(batch, 1, h, w)
 		context_feat = (v_feat*att_map).sum([2, 3])
-		context_feat = self.context_decoder(context_feat)
+		context_feat = torch.relu(self.context_decoder(context_feat))
+
+		# encode position information
+		pos_feat = torch.relu(self.pos_encoder(pos))
 
 		# classification
-		cls_feat = torch.cat([context_feat, P1_feat, P2_feat], dim=-1)
+		cls_feat = torch.cat([context_feat, P1_feat, P2_feat, pos_feat], dim=-1)
+		if not self.use_softmax:
+			pred = torch.sigmoid(self.cls_layer(self.dp(cls_feat)))
+		else:
+			pred = F.softmax(self.cls_layer(self.dp(cls_feat)), dim=-1)
+
+		return pred
+
+
+class OrdinalNet_feat(nn.Module):
+	""" A customized model for ordinal prediction. The model Gaussian 
+		masks as implicit features.
+	"""
+
+	def __init__(self, use_softmax):
+		super(OrdinalNet_feat, self).__init__()
+
+		self.use_softmax = use_softmax
+
+		# user a global encoder to extract features from the whole image
+		self.encoder = nn.Sequential(
+				nn.Conv2d(4, 16, kernel_size=5, padding=2, bias=True), # originally kernel=3, filter 16
+				nn.ReLU(),
+				# nn.BatchNorm2d(16),
+				nn.MaxPool2d(kernel_size=2, stride=2),
+				nn.Conv2d(16, 32, kernel_size=5, padding=2, bias=True), # originally kernel=3, filter 32
+				nn.ReLU(),
+				# nn.BatchNorm2d(32),
+				nn.MaxPool2d(kernel_size=2, stride=2),
+				nn.Conv2d(32, 48, kernel_size=3, padding=1, bias=True), # originally kernel=3, filter 48
+				nn.ReLU(),
+				# nn.BatchNorm2d(48),
+			)
+
+		# classification layer
+		self.dp = nn.Dropout(0.2)
+		if not self.use_softmax:
+			self.cls_layer = nn.Linear(96, 1)
+		else:
+			self.cls_layer = nn.Linear(96, 2)
+
+	def forward(self, Bbox, M1, M2):
+		""" Inference process for predicting the ordinal relationship
+		between two points.
+
+		Inputs:
+			Bbox: Cropped bounding boxes covering the two points, 
+				with size (batch, 3, 32, 32)
+			M1: Gaussian masks for the first points, size (batch, 1, 32, 32)
+			M1: Gaussian masks for the second points, size (batch, 1, 32, 32)
+
+		Return:
+			pred: Predicted ordinal relationships between the selected 
+				two points. Predictions are formulated as binary probabilities 
+				point A is greater than point B.   
+		"""
+		
+		# concatenating images with mask for the two points
+		P1_feat = torch.cat([Bbox, M1], dim=1)
+		P2_feat = torch.cat([Bbox, M2], dim=1)
+
+		P1_feat = self.encoder(P1_feat).sum([2, 3])
+		P2_feat = self.encoder(P2_feat).sum([2, 3])
+
+
+		# classification
+		cls_feat = torch.cat([P1_feat, P2_feat], dim=-1)
 		if not self.use_softmax:
 			pred = torch.sigmoid(self.cls_layer(self.dp(cls_feat)))
 		else:
